@@ -45,15 +45,17 @@ class Observation:
 
         self.aux_2d = np.empty((2, 3))
         v = np.reshape(self.gaze_2d.direction, (2, 1))
-        self.aux_2d[:, :2] = np.eye(2) - v @ v.T
-        self.aux_2d[:, 2] = (np.eye(2) - v @ v.T) @ self.gaze_2d.origin
+        proj_2d = np.eye(2) - v @ v.T  # projector; was rebuilt twice
+        self.aux_2d[:, :2] = proj_2d
+        self.aux_2d[:, 2] = proj_2d @ self.gaze_2d.origin
 
         self.aux_3d = np.empty((2, 3, 4))
         for i in range(2):
             Dierkes_line = self.get_Dierkes_line(i)
             v = np.reshape(Dierkes_line.direction, (3, 1))
-            self.aux_3d[i, :3, :3] = np.eye(3) - v @ v.T
-            self.aux_3d[i, :3, 3] = (np.eye(3) - v @ v.T) @ Dierkes_line.origin
+            proj_3d = np.eye(3) - v @ v.T  # projector; was rebuilt twice
+            self.aux_3d[i, :3, :3] = proj_3d
+            self.aux_3d[i, :3, 3] = proj_3d @ Dierkes_line.origin
 
     def get_Dierkes_line(self, i):
         origin = (

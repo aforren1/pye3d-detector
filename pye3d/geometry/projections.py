@@ -1,4 +1,5 @@
 import logging
+import math
 
 import numpy as np
 
@@ -63,29 +64,33 @@ def project_circle_into_image_plane(
 
     if disc_ < 0:
         A, B, C, D, E, F = conic.A, conic.B, conic.C, conic.D, conic.E, conic.F
+        # All scalars here -> use the math module (much lower per-call overhead
+        # than numpy ufuncs on 0-d values). math.sqrt is bit-identical to
+        # np.sqrt; math.atan differs from np.arctan only at the ~1 ULP level.
         center_x = (2 * C * D - B * E) / disc_
         center_y = (2 * A * E - B * D) / disc_
         temp_ = 2 * (A * E**2 + C * D**2 - B * D * E + disc_ * F)
+        root_disc = math.sqrt((A - C) ** 2 + B**2)
         minor_axis = (
-            -np.sqrt(np.abs(temp_ * (A + C - np.sqrt((A - C) ** 2 + B**2)))) / disc_
+            -math.sqrt(abs(temp_ * (A + C - root_disc))) / disc_
         )  # Todo: Absolute value???
         major_axis = (
-            -np.sqrt(np.abs(temp_ * (A + C + np.sqrt((A - C) ** 2 + B**2)))) / disc_
+            -math.sqrt(abs(temp_ * (A + C + root_disc))) / disc_
         )
 
         if B == 0 and A < C:
             angle = 0
         elif B == 0 and A >= C:
-            angle = np.pi / 2.0
+            angle = math.pi / 2.0
         else:
-            angle = np.arctan((C - A - np.sqrt((A - C) ** 2 + B**2)) / B)
+            angle = math.atan((C - A - root_disc) / B)
 
         # TO BE CONSISTENT WITH PUPIL
         if transform:
             center_x = center_x + width / 2.0
             center_y = center_y + height / 2.0
             minor_axis, major_axis = 2.0 * minor_axis, 2.0 * major_axis
-            angle = angle * 180.0 / np.pi + 90.0
+            angle = angle * 180.0 / math.pi + 90.0
 
         return Ellipse(np.asarray([center_x, center_y]), minor_axis, major_axis, angle)
 

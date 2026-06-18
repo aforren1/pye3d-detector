@@ -1,4 +1,5 @@
 import logging
+import math
 import typing as T
 
 import numpy as np
@@ -171,16 +172,28 @@ class TwoSphereModel(TwoSphereModelAbstract):
 
     def _calc_sphere_center(self, sum_aux_3d, prior_3d=None, prior_strength=0.0):
         matrix = sum_aux_3d[:3, :3]
+        if prior_3d is None:
+            b = sum_aux_3d[:3, 3]
+        else:
+            matrix = matrix + prior_strength * np.eye(3)
+            b = sum_aux_3d[:3, 3] + prior_strength * prior_3d
+        # `matrix` is a sum of projectors (I - vv^T): symmetric positive
+        # semi-definite. When it is well-conditioned (the steady-state norm) a
+        # direct 3x3 solve is far cheaper than forming the SVD-based pseudo-
+        # inverse and gives the same answer. Cholesky is the conditioning gate:
+        # it succeeds iff the matrix is numerically positive-definite, and raises
+        # exactly on the near-singular frames (early convergence / parallel
+        # lines) where LU-solve would diverge but pinv yields a stable min-norm
+        # solution. So: Cholesky-gate -> solve, else pinv, else DEFAULT.
         try:
-            if prior_3d is None:
-                return np.linalg.pinv(matrix) @ sum_aux_3d[:3, 3]
-            else:
-                return np.linalg.pinv(matrix + prior_strength * np.eye(3)) @ (
-                    sum_aux_3d[:3, 3] + prior_strength * prior_3d
-                )
+            np.linalg.cholesky(matrix)
+            return np.linalg.solve(matrix, b)
         except np.linalg.LinAlgError:
-            # happens if lines are parallel, very rare
-            return DEFAULT_SPHERE_CENTER
+            try:
+                return np.linalg.pinv(matrix) @ b
+            except np.linalg.LinAlgError:
+                # happens if lines are parallel, very rare
+                return DEFAULT_SPHERE_CENTER
 
     def _calc_rms_residual(
         self, observations, disamb_indices, sphere_center, aux_3d_disamb
@@ -239,7 +252,9 @@ class TwoSphereModel(TwoSphereModelAbstract):
             return Circle.null()
 
         circle_3d = self._disambiguate_circle_3d_pair(observation.circle_3d_pair)
-        unprojection_depth = np.linalg.norm(circle_3d.center)
+        # norm of a 3-vector == sqrt(v . v); avoids np.linalg.norm overhead.
+        cc = circle_3d.center
+        unprojection_depth = math.sqrt(cc.dot(cc))
         direction = circle_3d.center / unprojection_depth
 
         nearest_point_on_sphere = nearest_point_on_sphere_to_line(
@@ -251,7 +266,7 @@ class TwoSphereModel(TwoSphereModelAbstract):
         else:
             gaze_vector = normalize(nearest_point_on_sphere - self.sphere_center)
 
-        radius = np.linalg.norm(nearest_point_on_sphere) / unprojection_depth
+        radius = math.sqrt(nearest_point_on_sphere.dot(nearest_point_on_sphere)) / unprojection_depth
         pupil_circle = Circle(nearest_point_on_sphere, gaze_vector, radius)
         return pupil_circle
 

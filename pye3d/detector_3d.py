@@ -1,5 +1,6 @@
 import enum
 import logging
+import math
 import traceback
 from typing import Dict, NamedTuple, Type
 
@@ -83,7 +84,9 @@ class Search3DResult(NamedTuple):
 
 
 def sigmoid(x, baseline=0.1, amplitude=500.0, center=0.99, width=0.02):
-    return baseline + amplitude * 1.0 / (1.0 + np.exp(-(x - center) / width))
+    # x is a scalar (mean circularity) -> math.exp avoids numpy's scalar
+    # ufunc overhead. The argument range (x in [0,1]) cannot overflow exp.
+    return baseline + amplitude * 1.0 / (1.0 + math.exp(-(x - center) / width))
 
 
 class Detector3D:
@@ -411,16 +414,27 @@ class Detector3D:
         if best_guess.is_null():
             return no_result
 
-        frame, frame_roi, edge_frame, edges, roi = get_edges(
-            frame,
-            best_guess.normal,
-            best_guess.radius,
-            self.long_term_model.sphere_center,
-            _EYE_RADIUS_DEFAULT,
-            self.camera.focal_length,
-            self.camera.resolution,
-            major_axis_factor=2.5,
-        )
+        # get_edges runs OpenCV morphology/medianBlur/Canny on a tiny ROI. On
+        # such small images OpenCV's thread-pool dispatch costs far more than it
+        # saves (same finding as the 2D detector), so force single-threaded for
+        # the call. Result is bit-identical (threading does not affect output).
+        # Scoped save/restore so we don't perturb the host application's global
+        # cv2 thread setting.
+        _prev_cv_threads = cv2.getNumThreads()
+        cv2.setNumThreads(1)
+        try:
+            frame, frame_roi, edge_frame, edges, roi = get_edges(
+                frame,
+                best_guess.normal,
+                best_guess.radius,
+                self.long_term_model.sphere_center,
+                _EYE_RADIUS_DEFAULT,
+                self.camera.focal_length,
+                self.camera.resolution,
+                major_axis_factor=2.5,
+            )
+        finally:
+            cv2.setNumThreads(_prev_cv_threads)
 
         if len(edges) <= 0:
             return no_result

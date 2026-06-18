@@ -1,9 +1,15 @@
+import math
+
 import numpy as np
 
 
 def cart2sph(x):
-    phi = np.arctan2(x[2], x[0])
-    theta = np.arccos(x[1] / np.linalg.norm(x))
+    # Scalar trig/sqrt via the math module -- far less per-call overhead than the
+    # numpy ufuncs on 0-d scalars. norm of a vector == sqrt(x . x). np.arccos is
+    # kept (not math.acos) to preserve the boundary behavior: a fp-overshoot
+    # |arg|>1 yields nan -> handled downstream, whereas math.acos would raise.
+    phi = math.atan2(x[2], x[0])
+    theta = np.arccos(x[1] / math.sqrt(np.dot(x, x)))
 
     return phi, theta
 
@@ -11,14 +17,22 @@ def cart2sph(x):
 def sph2cart(phi, theta):
     result = np.empty(3)
 
-    result[0] = np.sin(theta) * np.cos(phi)
-    result[1] = np.cos(theta)
-    result[2] = np.sin(theta) * np.sin(phi)
+    sin_theta = math.sin(theta)
+    result[0] = sin_theta * math.cos(phi)
+    result[1] = math.cos(theta)
+    result[2] = sin_theta * math.sin(phi)
 
     return result
 
 
 def normalize(v, axis=-1):
+    # Fast path for the overwhelmingly common 1-D (single vector) case,
+    # sidestepping np.linalg.norm's heavy per-call Python dispatch. Use
+    # sqrt(sum(v*v)) -- the *same* elementwise-square + add.reduce that
+    # np.linalg.norm(v, axis=-1) performs -- so the result is bit-identical
+    # (the BLAS dot path would differ by ~1 ULP).
+    if isinstance(v, np.ndarray) and v.ndim == 1:
+        return v / math.sqrt((v * v).sum())
     return v / np.linalg.norm(v, axis=axis)
 
 
