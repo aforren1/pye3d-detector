@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 
-from ..cpp.projections import unproject_ellipse
+from ..cpp.projections import build_observation_aux, unproject_ellipse
 from .intersections import intersect_sphere_multiple_lines
 from .primitives import Conic, Ellipse, Line
 
@@ -116,6 +116,7 @@ def project_sphere_into_image_plane(
 
 __all__ = [
     "unproject_ellipse",
+    "build_observation_aux",
     "project_sphere_into_image_plane",
     "project_circle_into_image_plane",
     "project_line_into_image_plane",

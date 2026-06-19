@@ -9,7 +9,7 @@ from sortedcontainers import SortedList
 from .camera import CameraModel
 from .constants import _EYE_RADIUS_DEFAULT
 from .geometry.primitives import Ellipse, Line
-from .geometry.projections import project_line_into_image_plane, unproject_ellipse
+from .geometry.projections import build_observation_aux, unproject_ellipse
 
 
 class Observation:
@@ -37,25 +37,17 @@ class Observation:
         self.confidence = self.confidence_2d
         self.circle_3d_pair = circle_3d_pair
 
-        self.gaze_3d_pair = [
-            Line(circle_3d_pair[i].center, circle_3d_pair[i].normal) for i in [0, 1]
-        ]
-        self.gaze_2d = project_line_into_image_plane(self.gaze_3d_pair[0], focal_length)
-        self.gaze_2d_line = np.array([*self.gaze_2d.origin, *self.gaze_2d.direction])
-
-        self.aux_2d = np.empty((2, 3))
-        v = np.reshape(self.gaze_2d.direction, (2, 1))
-        proj_2d = np.eye(2) - v @ v.T  # projector; was rebuilt twice
-        self.aux_2d[:, :2] = proj_2d
-        self.aux_2d[:, 2] = proj_2d @ self.gaze_2d.origin
-
-        self.aux_3d = np.empty((2, 3, 4))
-        for i in range(2):
-            Dierkes_line = self.get_Dierkes_line(i)
-            v = np.reshape(Dierkes_line.direction, (3, 1))
-            proj_3d = np.eye(3) - v @ v.T  # projector; was rebuilt twice
-            self.aux_3d[i, :3, :3] = proj_3d
-            self.aux_3d[i, :3, 3] = proj_3d @ Dierkes_line.origin
+        # gaze_2d_line / aux_2d / aux_3d are pure fixed-size geometry built from
+        # the unprojected circle pair. Done in one typed-Cython call instead of a
+        # cluster of tiny numpy ops (project/normalize/eye/reshape/matmul), whose
+        # cost here was per-call dispatch overhead, not arithmetic. gaze_2d and
+        # gaze_3d_pair are not consumed elsewhere, so they are no longer built.
+        c0, c1 = circle_3d_pair
+        self.gaze_2d_line, self.aux_2d, self.aux_3d = build_observation_aux(
+            np.ascontiguousarray(c0.center), np.ascontiguousarray(c0.normal),
+            np.ascontiguousarray(c1.center), np.ascontiguousarray(c1.normal),
+            focal_length, _EYE_RADIUS_DEFAULT,
+        )
 
     def get_Dierkes_line(self, i):
         origin = (

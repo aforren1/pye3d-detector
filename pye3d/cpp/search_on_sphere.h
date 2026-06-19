@@ -69,6 +69,14 @@ search_3d_result find_best_circle(const Eigen::MatrixXd & edges_on_sphere_T,
     }
     filtered_edges.conservativeResize(edges_on_sphere.rows(), j);
 
+    // Per-candidate inlier counting is the hot loop (cost ~ n_candidates *
+    // n_edges, and n_edges can reach ~1400 on noisy blink ROIs). Precompute the
+    // edge squared-norms once and evaluate per-candidate distances as
+    //   |e - c|^2 = |e|^2 - 2 e.c + |c|^2
+    // so each candidate is a single GEMV (c^T * E, BLAS-vectorized) + a
+    // vectorized band count, instead of a colwise subtract + scalar loop.
+    const Eigen::RowVectorXd edge_sqnorm = filtered_edges.colwise().squaredNorm();
+
     double phi_initial = atan2(initial_pupil_normal[2],initial_pupil_normal[0]);
     double theta_initial = acos(initial_pupil_normal[1]);
 
@@ -83,16 +91,15 @@ search_3d_result find_best_circle(const Eigen::MatrixXd & edges_on_sphere_T,
                    const Eigen::Vector3d current_pupil_center = sphere_center + sphere_radius * current_gaze_vector;
 
                    const double bandwidth_in_mm = bandwidth_in_pixels * current_pupil_center[2] / focal_length;
+                   const double lo = pow(initial_pupil_radius - bandwidth_in_mm, 2);
+                   const double hi = pow(initial_pupil_radius + bandwidth_in_mm, 2);
 
-                   auto distances_from_current_pupil_center = (filtered_edges.colwise()-current_pupil_center).colwise().squaredNorm();
+                   const Eigen::ArrayXd distances = edge_sqnorm.array()
+                       + current_pupil_center.squaredNorm()
+                       - 2.0 * (current_pupil_center.transpose() * filtered_edges).array();
 
-                   int edge_count = 0;
-                   for (int i=0;i<filtered_edges.cols();i++){
-                        if (pow(initial_pupil_radius - bandwidth_in_mm, 2) < distances_from_current_pupil_center[i] &&
-                            distances_from_current_pupil_center[i] < pow(initial_pupil_radius + bandwidth_in_mm, 2)){
-                            edge_count+=1;
-                        }
-                   }
+                   const int edge_count = (int)((distances > lo) && (distances < hi)).count();
+
                    if (edge_count>edge_count_max){
                         edge_count_max = edge_count;
                         best_phi = phi;
@@ -163,6 +170,12 @@ search_3d_result search_on_sphere(const numpy_matrix_view & edges_on_sphere_raw,
                                                         6.0,
                                                         focal_length);
 
+        // If the broad first pass found no inliers at all, it returns a
+        // degenerate gaze (0,0,-1) / radius 0. The narrow second pass would then
+        // refine around that meaningless direction; skip it (saves the costly
+        // second grid on exactly the noisy/blink frames where pass 1 failed).
+        if (result_first_iteration.pupil_radius == 0)
+            return result_first_iteration;
 
         search_3d_result result_second_iteration = find_best_circle(edges_on_sphere,
                                                         result_first_iteration.gaze_vector,

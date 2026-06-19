@@ -3,6 +3,10 @@ import numpy as np
 
 cimport numpy as np
 
+# Structuring element for the ROI MORPH_OPEN. Cached at import (was rebuilt on
+# every get_edges call).
+_MORPH_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+
 from .common_types cimport MatrixXd, Vector3d
 
 from ..geometry.projections import (
@@ -13,6 +17,12 @@ from ..geometry.projections import (
 from ..geometry.utilities import normalize
 
 _EYE_RADIUS_DEFAULT: float = 10.392304845413264
+# Cap the 3D-search ROI half-window to this fraction of the smaller sensor
+# dimension. Bounds the morphology/median latency tail on pathological (blink)
+# frames where the eyeball estimate collapses and the window would otherwise
+# balloon toward the full frame. Chosen above the normal ROI range (which peaks
+# well under it) so valid frames are untouched.
+_ROI_MAX_AXIS_FRAC: float = 0.3
 
 cdef extern from "search_on_sphere.h":
 
@@ -74,6 +84,13 @@ def get_edges(frame,
     x = x + resolution[0]/2
     y = y + resolution[1]/2
     major_axis =  major_axis_factor * major_axis_estimate
+    # Cap the search half-window at a fraction of the sensor: a pupil cannot
+    # plausibly fill the frame. On transient/blink frames the eyeball estimate
+    # can collapse (tiny |predicted_pupil_center|), inflating major_axis toward
+    # the full frame and making the morphology/median pass (which scale with ROI
+    # area) the latency tail. Normal ROIs sit well below this cap, so valid
+    # frames are unaffected; it only trims the pathological ones.
+    major_axis = min(major_axis, _ROI_MAX_AXIS_FRAC * min(resolution[0], resolution[1]))
     N,M = frame.shape
     ymin, ymax = max(0,int(y-major_axis)), min(N,int(y+major_axis))
     xmin, xmax = max(0,int(x-major_axis)), min(M,int(x+major_axis))
@@ -82,8 +99,7 @@ def get_edges(frame,
            return None, None, None, [], [ymin,ymax,xmin,xmax]
 
     frame_roi = frame[ymin:ymax, xmin:xmax]
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(9,9))
-    frame_roi = cv2.morphologyEx(frame_roi, cv2.MORPH_OPEN, kernel)
+    frame_roi = cv2.morphologyEx(frame_roi, cv2.MORPH_OPEN, _MORPH_KERNEL)
     frame_roi = cv2.medianBlur(frame_roi, 5)
     frame_roi = cv2.normalize(frame_roi, 0, 255, norm_type=cv2.NORM_MINMAX)
     edge_frame = cv2.Canny(frame_roi, 100, 100, 5)
