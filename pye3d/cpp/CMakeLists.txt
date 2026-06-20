@@ -1,57 +1,45 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.21...4.0)
 
-project("pye3d")
+project("pye3d" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 if(APPLE)
-    # We target macOS 10.12, which does not offer c++17, but we can use c++1z instead.
+    # We target older macOS where c++17 is spelled c++1z on AppleClang.
     # See https://clang.llvm.org/cxx_status.html
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1z")
 endif()
 
-# find skbuild cmake packages
-find_package(PythonExtensions REQUIRED)
-find_package(Cython REQUIRED)
-
-# find external cmake packages
-find_package(NumPy REQUIRED)
+# scikit-build-core hands us a configured FindPython; cython-cmake provides the
+# UseCython helpers (add it to build-system.requires). NumPy is intentionally
+# not required: the .pyx files use typed memoryviews (buffer protocol), not the
+# numpy C-API.
+find_package(Python REQUIRED COMPONENTS Interpreter Development.Module Development.SABIModule)
+find_package(Cython MODULE REQUIRED VERSION 3.0)
+include(UseCython)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
-# include cpp folder for finding headers
-include_directories(".")
+# scikit-build-core sets SKBUILD_SABI_VERSION (from wheel.py-api) only for abi3
+# builds (CPython 3.11+ here); on 3.10 it is unset and we build a normal
+# version-specific module. USE_SABI then defines Py_LIMITED_API + .abi3 suffix.
+if(DEFINED SKBUILD_SABI_VERSION AND NOT SKBUILD_SABI_VERSION STREQUAL "")
+    set(_sabi_args USE_SABI ${SKBUILD_SABI_VERSION})
+else()
+    set(_sabi_args)
+endif()
 
-# include numpy headers
-include_directories(${NumPy_INCLUDE_DIRS})
-
-# Note: add_cython_target does not actually add a target, but fills a variable with the
-# corresponding compiled source file, e.g. here 'pupil_detection_3d.cxx'. If only the
-# name is specified, it will look for a cython file with the same base name:
-# 'pupil_detection_3d.pyx' in this case.
-add_cython_target(pupil_detection_3d CXX PY3)
-
-# Create a module library from the source file and wrap it with settings for
-# creating a python extension.
-add_library(pupil_detection_3d MODULE ${pupil_detection_3d})
-python_extension_module(pupil_detection_3d)
-
-# link against external libraries
-target_link_libraries(pupil_detection_3d Eigen3::Eigen)
-
-# Same for other cython modules, read comments above for explanation
-add_cython_target(projections CXX PY3)
-add_library(projections MODULE ${projections})
-python_extension_module(projections)
-target_link_libraries(projections Eigen3::Eigen)
-
-# Same for other cython modules, read comments above for explanation
-add_cython_target(refraction_correction CXX PY3)
-add_library(refraction_correction MODULE ${refraction_correction})
-python_extension_module(refraction_correction)
-target_link_libraries(refraction_correction Eigen3::Eigen)
-
-# install here
-install(
-    TARGETS pupil_detection_3d projections refraction_correction
-    LIBRARY DESTINATION ".")
+# Each module is a C++ Cython extension. They cimport common_types.pxd (Eigen
+# typedefs) and pull in sibling C++ headers (search_on_sphere.h, etc.), so every
+# target gets the source dir on its include path and links Eigen.
+set(PYE3D_MODULES pupil_detection_3d projections refraction_correction)
+foreach(mod IN LISTS PYE3D_MODULES)
+    cython_transpile("${mod}.pyx"
+        LANGUAGE CXX
+        CYTHON_ARGS -3 -I "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE ${mod}_cxx)
+    python_add_library(${mod} MODULE WITH_SOABI ${_sabi_args} "${${mod}_cxx}")
+    target_include_directories(${mod} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${mod} PRIVATE Eigen3::Eigen)
+    install(TARGETS ${mod} DESTINATION "pye3d/cpp")
+endforeach()

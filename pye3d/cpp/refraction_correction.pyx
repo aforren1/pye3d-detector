@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
 
-cimport numpy as np
-
 from .common_types cimport MatrixXd, Vector3d
 
 

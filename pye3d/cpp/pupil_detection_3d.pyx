@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
 
-cimport numpy as np
-
 # Structuring element for the ROI MORPH_OPEN. Cached at import (was rebuilt on
 # every get_edges call).
 _MORPH_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))

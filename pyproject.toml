@@ -1,20 +1,134 @@
 [build-system]
 requires = [
-    "setuptools>=56",
-    "wheel",
-    "scikit-build",
-    "cmake",
-    "ninja; platform_system!='Windows'",
-    "numpy",
-    "cython",
-    "setuptools_scm[toml]>=3.4.1"
+    "scikit-build-core>=0.10",
+    "cython>=3.0",
+    "cython-cmake>=0.2",
+    "setuptools-scm>=3.4.1",
 ]
-build-backend = "setuptools.build_meta"
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pye3d"
+description = "3D eye model"
+readme = "README.rst"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Pupil Labs GmbH", email = "info@pupil-labs.com" }]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "msgpack>=1.0",
+    "numpy",
+    "sortedcontainers",
+]
+
+[project.urls]
+Homepage = "https://github.com/pupil-labs/pye3d-detector"
+
+[project.optional-dependencies]
+docs = [
+    "furo",
+    "jaraco.packaging>=8.2",
+    "rst.linker>=1.9",
+    "sphinx<4.4",  # 4.4 does not detect TypeVars correctly
+]
+examples = [
+    "opencv-python",
+    "pupil-detectors",
+]
+legacy_sklearn_models = [
+    "joblib",
+    "scikit-learn",
+]
+testing = [
+    "matplotlib",
+    "opencv-python-headless",
+    "pandas",
+    "pytest>=6",
+    "pytest-checkdocs>=2.4",
+    "pytest-cov",
+    "pytest-enabler>=1.0.1",
+    "scikit-image",
+]
+with_opencv = [
+    "opencv-python",
+]
+
+[tool.scikit-build]
+# The CMakeLists lives next to the C++/Cython sources.
+cmake.source-dir = "pye3d/cpp"
+cmake.version = ">=3.21"
+build-dir = "build/{wheel_tag}"
+# Pure-Python package is copied from the source tree; the compiled modules are
+# placed into pye3d/cpp by CMake install(). Keep C/Cython sources out of wheels.
+wheel.packages = ["pye3d"]
+wheel.exclude = [
+    "**/*.pyx",
+    "**/*.pxd",
+    "**/*.h",
+    "**/CMakeLists.txt",
+]
+sdist.include = [
+    "pye3d/cpp/*.pyx",
+    "pye3d/cpp/*.pxd",
+    "pye3d/cpp/*.h",
+    "pye3d/cpp/CMakeLists.txt",
+    "pye3d/refraction_models/*.msgpack",
+]
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+# Python 3.11+ gets a single stable-ABI (abi3) wheel; 3.10 gets a normal
+# version-specific wheel (Limited-API memoryviews require 3.11+). py-api drives
+# SKBUILD_SABI_VERSION in CMake (-> Py_LIMITED_API / .abi3 suffix).
+[[tool.scikit-build.overrides]]
+if.python-version = ">=3.11"
+wheel.py-api = "cp311"
+
+[tool.setuptools_scm]
 
 [tool.black]
 skip-string-normalization = true
 
-[tool.setuptools_scm]
+[tool.cibuildwheel]
+build-frontend = "build"
+archs = ["native"]
+# pye3d only needs header-only Eigen at build time (installed per-platform in
+# before-all). Python floor (>=3.10) comes from requires-python; musllinux is
+# skipped because before-all uses yum, not apk.
+skip = "pp* *-musllinux*"
+manylinux-x86_64-image = "manylinux2014"
 
-[pytest.enabler.cov]
-addopts = "--cov"
+# OpenCV (+ friends) are only needed to run the test suite. The test input is
+# fetched from the project wiki at test time.
+test-requires = [
+    "pytest",
+    "opencv-python-headless",
+    "pandas",
+    "scikit-image",
+    "matplotlib",
+]
+test-command = "curl -L https://github.com/pupil-labs/pye3d-detector/wiki/files/pye3d_test_input.npz --silent --output {package}/tests/integration/input/pye3d_test_input.npz && pytest {package}/tests"
+
+[tool.cibuildwheel.linux]
+before-all = "yum install -y eigen3-devel"
+
+[tool.cibuildwheel.macos]
+before-all = "brew install eigen"
+
+[tool.cibuildwheel.windows]
+before-all = "choco install eigen -y"
+before-build = "pip install delvewheel"
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"

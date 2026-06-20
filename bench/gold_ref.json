@@ -1,0 +1,23 @@
+{
+  "pye3d": "0.1.dev450+geb50e384c",
+  "n": 1000,
+  "convergence_time_s": 0.18,
+  "eye_center_3d_mm": {
+    "max": 0.45234947777915935,
+    "mean": 0.1827071817604943
+  },
+  "gaze_angle_deg": {
+    "max": 0.7799363444532695,
+    "mean": 0.3143499985263484
+  },
+  "pupil_radius_mm": {
+    "max": 0.03398932627615947,
+    "mean": 0.013503108099014508
+  },
+  "pass": {
+    "eye_center_3d": true,
+    "gaze_angle": true,
+    "pupil_radius": true,
+    "convergence_time": true
+  }
+}
